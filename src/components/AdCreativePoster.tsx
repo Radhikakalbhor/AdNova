@@ -20,7 +20,14 @@ import {
   Clock,
   Coffee,
   AlertCircle,
+  Palette,
+  Droplets,
+  Zap,
+  Cpu,
 } from 'lucide-react';
+
+// Global shared cooldown tracker across variation instances to prevent socket flooding
+let globalCooldownExpiry = 0;
 
 interface AdCreativePosterProps {
   creative: VisualCreative;
@@ -44,6 +51,15 @@ export function AdCreativePoster({
 
   // Fetch the AI image with rate-limit cooldown handling
   const fetchImage = async () => {
+    // Check if global cooldown is still active from another variation
+    const now = Date.now();
+    if (globalCooldownExpiry > now) {
+      const remainingSec = Math.ceil((globalCooldownExpiry - now) / 1000);
+      setCooldownSeconds(remainingSec);
+      setLoadingState('cooldown');
+      return;
+    }
+
     setLoadingState('loading');
     setErrorMessage(null);
 
@@ -55,22 +71,30 @@ export function AdCreativePoster({
         const objectUrl = URL.createObjectURL(blob);
         setImageBlobUrl(objectUrl);
         setLoadingState('success');
-      } else if (res.status === 402) {
+      } else if (res.status === 402 || res.status === 429) {
         // Free limit on Pollinations anonymous endpoint (1 image per 45s)
         let retrySec = 45;
         try {
           const errData = await res.json();
-          const match = errData?.details?.match(/Retry after (\d+)s/);
-          if (match && match[1]) {
-            retrySec = parseInt(match[1], 10) + 1;
+          if (errData?.retryAfter) {
+            retrySec = Number(errData.retryAfter);
           }
         } catch {
           // Default to 45 seconds cooldown
         }
+        globalCooldownExpiry = Date.now() + retrySec * 1000;
         setCooldownSeconds(retrySec);
         setLoadingState('cooldown');
+      } else if (res.status === 504) {
+        setErrorMessage('Upstream queue timed out. Graphic fallback active.');
+        setLoadingState('error');
       } else {
-        setErrorMessage(`Server responded with ${res.status}. Rate limit or network delay.`);
+        try {
+          const errData = await res.json();
+          setErrorMessage(errData?.error || `Server responded with ${res.status}`);
+        } catch {
+          setErrorMessage(`Server responded with ${res.status}`);
+        }
         setLoadingState('error');
       }
     } catch {
@@ -213,10 +237,17 @@ export function AdCreativePoster({
             <CategoryIcon />
             <span className="capitalize">{creative.category} Commercial Ad</span>
           </span>
-          <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-mono text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20">
-            <Sparkles className="w-3 h-3 text-cyan-400" />
-            AI Photorealistic Visual
-          </span>
+          {imageBlobUrl ? (
+            <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+              <Sparkles className="w-3 h-3 text-emerald-400" />
+              AI Photorealistic Visual
+            </span>
+          ) : (
+            <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-mono text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded-full border border-cyan-500/20">
+              <Palette className="w-3 h-3 text-cyan-400" />
+              {loadingState === 'loading' ? 'Generating AI Visual...' : 'Creative Graphic Design'}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -341,15 +372,24 @@ export function AdCreativePoster({
           Prompt: <span className="text-slate-400 italic">“{creative.imagePrompt}”</span>
         </span>
         <div className="flex items-center gap-1.5 shrink-0">
-          {loadingState === 'success' && (
+          {imageBlobUrl && (
             <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
               <Check className="w-3 h-3" /> AI Visual Ready
             </span>
           )}
-          {loadingState === 'cooldown' && (
+          {!imageBlobUrl && loadingState === 'cooldown' && (
             <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 font-mono">
-              <Clock className="w-3 h-3 animate-spin" /> Cooldown: {cooldownSeconds}s
+              <Clock className="w-3 h-3 animate-spin" /> Free Cooldown: {cooldownSeconds}s
             </span>
+          )}
+          {!imageBlobUrl && loadingState === 'error' && (
+            <button
+              type="button"
+              onClick={fetchImage}
+              className="inline-flex items-center gap-1 text-[11px] text-indigo-300 hover:text-white font-medium hover:underline"
+            >
+              <RefreshCw className="w-3 h-3" /> Retry AI Image
+            </button>
           )}
         </div>
       </div>
@@ -444,6 +484,7 @@ function CommercialHeroLayout({
             onRetry={onRetry}
             colors={creative.colors}
             category={creative.category}
+            productName={productName}
           />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
@@ -519,6 +560,7 @@ function CommercialBillboardLayout({
             onRetry={onRetry}
             colors={creative.colors}
             category={creative.category}
+            productName={productName}
           />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/75 to-slate-950/45 pointer-events-none" />
@@ -665,6 +707,7 @@ function CommercialColorBlockLayout({
               onRetry={onRetry}
               colors={creative.colors}
               category={creative.category}
+              productName={productName}
             />
           )}
         </div>
@@ -704,6 +747,7 @@ function CommercialKineticLayout({
             onRetry={onRetry}
             colors={creative.colors}
             category={creative.category}
+            productName={productName}
           />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-black/45" />
@@ -797,6 +841,7 @@ function CommercialPowerhouseLayout({
             onRetry={onRetry}
             colors={creative.colors}
             category={creative.category}
+            productName={productName}
           />
         )}
       </div>
@@ -837,8 +882,158 @@ function CommercialPowerhouseLayout({
 }
 
 // -------------------------------------------------------------
-// Interactive Image Loading & Rate-Limit Cooldown Placeholder
-// Transparently handles and communicates the exact free-tier limit
+// Category-Specific High-Resolution Fallback Vector Artwork
+// Ensures no ad ever presents a blank or broken black box
+// -------------------------------------------------------------
+function CategoryFallbackGraphic({
+  category,
+  productName,
+}: {
+  category: string;
+  productName: string;
+  colors?: any;
+}) {
+  switch (category) {
+    case 'skincare':
+      return (
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 overflow-hidden bg-gradient-to-br from-rose-950/60 via-slate-950 to-emerald-950/40 select-none">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-rose-400/20 via-transparent to-transparent pointer-events-none" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="relative flex items-center justify-center mb-3">
+              <div className="w-20 h-20 rounded-full bg-rose-500/15 border border-rose-400/30 flex items-center justify-center shadow-2xl backdrop-blur-sm">
+                <Droplets className="w-10 h-10 text-rose-300 drop-shadow" />
+              </div>
+              <Sparkles className="w-5 h-5 text-amber-300 absolute -top-1 -right-1 animate-pulse" />
+            </div>
+            <span className="inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-rose-900/60 border border-rose-500/30 text-rose-200">
+              ✦ GENTLE DERMAL ESSENCE
+            </span>
+            <p className="text-xs font-bold text-slate-200 max-w-[220px] truncate mt-1">
+              {productName}
+            </p>
+          </div>
+          <div className="absolute -bottom-8 -left-8 w-32 h-32 rounded-full border border-rose-500/10 pointer-events-none" />
+          <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full border border-emerald-500/10 pointer-events-none" />
+        </div>
+      );
+
+    case 'coffee':
+      return (
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 overflow-hidden bg-gradient-to-br from-amber-950/70 via-stone-950 to-orange-950/50 select-none">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-500/20 via-transparent to-transparent pointer-events-none" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="relative flex items-center justify-center mb-3">
+              <div className="w-20 h-20 rounded-full bg-amber-500/15 border border-amber-400/30 flex items-center justify-center shadow-2xl backdrop-blur-sm">
+                <Coffee className="w-10 h-10 text-amber-300 drop-shadow animate-pulse" />
+              </div>
+              <Sparkles className="w-5 h-5 text-amber-400 absolute -top-1 -right-1" />
+            </div>
+            <span className="inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-amber-900/60 border border-amber-500/30 text-amber-200">
+              ☕ SINGLE-ORIGIN ROAST
+            </span>
+            <p className="text-xs font-bold text-amber-100/90 max-w-[220px] truncate mt-1">
+              {productName}
+            </p>
+          </div>
+          <div className="absolute -bottom-10 -right-10 w-36 h-36 rounded-full border border-amber-500/10 pointer-events-none" />
+        </div>
+      );
+
+    case 'food':
+      return (
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 overflow-hidden bg-gradient-to-br from-orange-950/70 via-slate-950 to-red-950/50 select-none">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-orange-500/20 via-transparent to-transparent pointer-events-none" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="w-20 h-20 rounded-full bg-orange-500/15 border border-orange-400/30 flex items-center justify-center shadow-2xl backdrop-blur-sm mb-3">
+              <Utensils className="w-10 h-10 text-orange-300 drop-shadow" />
+            </div>
+            <span className="inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-orange-900/60 border border-orange-500/30 text-orange-200">
+              ★ GOURMET CULINARY CREATION
+            </span>
+            <p className="text-xs font-bold text-slate-200 max-w-[220px] truncate mt-1">
+              {productName}
+            </p>
+          </div>
+        </div>
+      );
+
+    case 'beverage':
+      return (
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 overflow-hidden bg-gradient-to-br from-cyan-950/70 via-slate-950 to-blue-950/50 select-none">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-cyan-400/20 via-transparent to-transparent pointer-events-none" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="w-20 h-20 rounded-full bg-cyan-500/15 border border-cyan-400/30 flex items-center justify-center shadow-2xl backdrop-blur-sm mb-3">
+              <Droplets className="w-10 h-10 text-cyan-300 drop-shadow" />
+            </div>
+            <span className="inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-cyan-900/60 border border-cyan-500/30 text-cyan-200">
+              ❄ ICE-COLD REFRESHMENT
+            </span>
+            <p className="text-xs font-bold text-cyan-100 max-w-[220px] truncate mt-1">
+              {productName}
+            </p>
+          </div>
+        </div>
+      );
+
+    case 'fitness':
+      return (
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 overflow-hidden bg-gradient-to-br from-lime-950/70 via-slate-950 to-emerald-950/50 select-none">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-lime-400/20 via-transparent to-transparent pointer-events-none" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="w-20 h-20 rounded-full bg-lime-500/15 border border-lime-400/30 flex items-center justify-center shadow-2xl backdrop-blur-sm mb-3">
+              <Dumbbell className="w-10 h-10 text-lime-300 drop-shadow" />
+            </div>
+            <span className="inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-lime-900/60 border border-lime-500/30 text-lime-200">
+              ⚡ PEAK PERFORMANCE ATHLETICS
+            </span>
+            <p className="text-xs font-bold text-lime-100 max-w-[220px] truncate mt-1">
+              {productName}
+            </p>
+          </div>
+        </div>
+      );
+
+    case 'tech':
+      return (
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 overflow-hidden bg-gradient-to-br from-indigo-950/70 via-slate-950 to-cyan-950/50 select-none">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-500/20 via-transparent to-transparent pointer-events-none" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="w-20 h-20 rounded-full bg-indigo-500/15 border border-indigo-400/30 flex items-center justify-center shadow-2xl backdrop-blur-sm mb-3">
+              <Laptop className="w-10 h-10 text-indigo-300 drop-shadow" />
+            </div>
+            <span className="inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-indigo-900/60 border border-indigo-500/30 text-indigo-200">
+              🚀 NEXT-GEN AUTOMATION
+            </span>
+            <p className="text-xs font-bold text-indigo-100 max-w-[220px] truncate mt-1">
+              {productName}
+            </p>
+          </div>
+        </div>
+      );
+
+    default:
+      return (
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 overflow-hidden bg-gradient-to-br from-purple-950/70 via-slate-950 to-indigo-950/50 select-none">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-500/20 via-transparent to-transparent pointer-events-none" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="w-20 h-20 rounded-full bg-purple-500/15 border border-purple-400/30 flex items-center justify-center shadow-2xl backdrop-blur-sm mb-3">
+              <Sparkles className="w-10 h-10 text-purple-300 drop-shadow" />
+            </div>
+            <span className="inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-purple-900/60 border border-purple-500/30 text-purple-200">
+              ★ PREMIUM CRAFTED EDITION
+            </span>
+            <p className="text-xs font-bold text-purple-100 max-w-[220px] truncate mt-1">
+              {productName}
+            </p>
+          </div>
+        </div>
+      );
+  }
+}
+
+// -------------------------------------------------------------
+// Interactive Image Loading & Rate-Limit Cooldown Stage
+// Transparently handles free queue cooldown and renders elegant fallback artwork
 // -------------------------------------------------------------
 function ImageLoadingPlaceholder({
   loadingState,
@@ -847,71 +1042,55 @@ function ImageLoadingPlaceholder({
   onRetry,
   colors,
   category,
+  productName,
 }: any) {
-  if (loadingState === 'cooldown') {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-950/90 text-white space-y-3">
-        <div className="relative">
-          <div className="w-14 h-14 rounded-full border-4 border-amber-500/20 border-t-amber-400 animate-spin" />
-          <Clock className="w-6 h-6 text-amber-400 absolute inset-0 m-auto animate-pulse" />
-        </div>
-        <div className="space-y-1">
-          <div className="text-xs font-bold text-amber-300">
-            Free Queue Cooldown: {cooldownSeconds}s
-          </div>
-          <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
-            Pollinations anonymous tier limits requests to 1 image every 45s. Auto-generating when countdown reaches 0.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onRetry}
-          className="px-3 py-1 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 transition"
-        >
-          <RefreshCw className="w-3 h-3" />
-          <span>Retry Now</span>
-        </button>
-      </div>
-    );
-  }
-
-  if (loadingState === 'error') {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-950/90 text-white space-y-3">
-        <AlertCircle className="w-10 h-10 text-rose-400" />
-        <div className="space-y-1">
-          <div className="text-xs font-bold text-rose-300">
-            Image Generation Rate Limit
-          </div>
-          <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
-            {errorMessage || 'Free anonymous limit reached. Add a free API key in .env.local for instant multi-image generation.'}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onRetry}
-          className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center gap-1.5"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Try Again</span>
-        </button>
-      </div>
-    );
-  }
-
-  // Default 'loading' spinner
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-950/80 text-white space-y-3">
-      <div className="relative">
-        <div className="w-12 h-12 rounded-full border-4 border-indigo-500/20 border-t-indigo-400 animate-spin" />
-        <Sparkles className="w-5 h-5 text-indigo-400 absolute inset-0 m-auto animate-pulse" />
-      </div>
-      <div>
-        <div className="text-xs font-bold text-white">Generating AI Artwork...</div>
-        <div className="text-[10px] text-slate-400 mt-0.5">
-          Rendering photorealistic {category} commercial visuals
+    <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+      {/* Product-Specific Editorial Vector Artwork */}
+      <CategoryFallbackGraphic
+        category={category}
+        productName={productName}
+        colors={colors}
+      />
+
+      {/* Floating Non-Blocking Status Pill */}
+      {loadingState === 'loading' && (
+        <div className="no-print absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-950/85 backdrop-blur-md border border-white/20 text-white text-xs shadow-2xl">
+          <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+          <span className="text-[11px] font-medium">Generating AI visual...</span>
         </div>
-      </div>
+      )}
+
+      {loadingState === 'cooldown' && (
+        <div className="no-print absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-950/90 backdrop-blur-md border border-amber-500/40 text-amber-200 text-xs shadow-2xl">
+          <Clock className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+          <span className="text-[11px] font-mono font-medium">
+            Queue Cooldown: {cooldownSeconds}s
+          </span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="ml-1 px-2 py-0.5 rounded bg-amber-800/80 hover:bg-amber-700 text-white text-[10px] font-bold transition"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {loadingState === 'error' && (
+        <div className="no-print absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 backdrop-blur-md border border-white/20 text-slate-200 text-xs shadow-2xl">
+          <Palette className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="text-[11px] font-medium">Graphic Artwork Active</span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="ml-1 px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold flex items-center gap-1 transition"
+          >
+            <RefreshCw className="w-2.5 h-2.5" />
+            <span>Retry AI</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
